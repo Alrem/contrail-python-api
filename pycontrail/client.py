@@ -73,7 +73,7 @@ class Client(object):
                  blocking=True, headers=None, auth_params=None):
         self.api_url = url
         self._auth_params = auth_params
-        self._headers = headers or Client._DEFAULT_HEADERS
+        self._headers = headers or Client._DEFAULT_HEADERS.copy()
 
         self._obj_serializer = self._obj_serializer_diff
         if hasattr(pycontrail.gen.vnc_api_client_gen, 'all_resource_types'):
@@ -129,7 +129,6 @@ class Client(object):
     def _find_url(self, json_body, resource_name):
         rname = unicode(resource_name)
         py_obj = json.loads(json_body)
-        pprint.pprint(py_obj)
         for link in py_obj['links']:
             if link['link']['name'] == rname:
                 return link['link']['href']
@@ -147,10 +146,13 @@ class Client(object):
 
     def _authenticate(self, response=None, headers=None):
         new_headers = headers or {}
+        auth_url = self._auth_params['auth_url'].rstrip('/')
+        if auth_url.endswith('v3'):
+            auth_url += '/auth'
         try:
             response = requests.post(
-                self._auth_params['auth_url']+'/tokens',
-                data=self._generate_auth_body(),
+                auth_url + '/tokens',
+                json=self._generate_auth_dict(),
                 headers=self._DEFAULT_HEADERS)
         except Exception as e:
             raise RuntimeError('Unable to connect to keystone for authentication. Verify keystone server details')
@@ -162,7 +164,7 @@ class Client(object):
                 auth_token = auth_content['access']['token']['id']
             else:
                 auth_token = response.headers['x-subject-token']
-            new_headers['X-AUTH-TOKEN'] = auth_token
+            new_headers['X-Auth-Token'] = auth_token
             return new_headers
         else:
             raise RuntimeError('Authentication Failure')
@@ -225,15 +227,15 @@ class Client(object):
             except ConnectionError as e:
                 if not blocking:
                     raise
-     
+
                 retried += 1
                 time.sleep(1)
                 self._create_api_server_session()
                 continue
-     
+
             if status == 200:
                 return content
-     
+
             # Exception Response, see if it can be resolved
             if status == 401:
                 if retry_after_auth:
@@ -413,9 +415,9 @@ class Client(object):
             return dict((k, v) for k, v in obj.__dict__.iteritems())
     #end _obj_serializer_all
 
-    def _generate_auth_body(self):
+    def _generate_auth_dict(self):
         # find cases where we cannot produce a valid auth request
-        if (not self._auth_params or 
+        if (not self._auth_params or
             self._auth_params.get('type') != 'keystone' or
             self._auth_params.get('auth_url') is None or
             self._auth_params.get('username') is None or
@@ -443,16 +445,16 @@ class Client(object):
                             'domain': {
                                 'id': self._auth_params.get('domain_id',
                                                             'default')},
-                            'password': self._auth_params['password']}},
+                            'password': self._auth_params['password']}}},
                     'scope': {
                         'project': {
                             'domain': {
                                 'id': self._auth_params.get('domain_id',
                                                             'default')},
-                            'name': self._auth_params['username']}}}}}
-            return json.dumps(body_dict)
+                            'name': self._auth_params['tenant_name']}}}}
+            return body_dict
 
-    def ref_update(self, obj_type, obj_uuid, 
+    def ref_update(self, obj_type, obj_uuid,
         ref_type, ref_uuid, ref_fq_name, operation, attr=None):
         if ref_type.endswith('_refs'):
             ref_type = ref_type[:-5].replace('_', '-')
